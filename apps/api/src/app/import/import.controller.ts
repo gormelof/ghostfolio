@@ -3,6 +3,7 @@ import { HasPermissionGuard } from '@ghostfolio/api/guards/has-permission.guard'
 import { TransformDataSourceInRequestInterceptor } from '@ghostfolio/api/interceptors/transform-data-source-in-request/transform-data-source-in-request.interceptor';
 import { TransformDataSourceInResponseInterceptor } from '@ghostfolio/api/interceptors/transform-data-source-in-response/transform-data-source-in-response.interceptor';
 import { ConfigurationService } from '@ghostfolio/api/services/configuration/configuration.service';
+import { TagService } from '@ghostfolio/api/services/tag/tag.service';
 import { ImportResponse } from '@ghostfolio/common/interfaces';
 import { hasPermission, permissions } from '@ghostfolio/common/permissions';
 import type { RequestWithUser } from '@ghostfolio/common/types';
@@ -33,6 +34,7 @@ export class ImportController {
   public constructor(
     private readonly configurationService: ConfigurationService,
     private readonly importService: ImportService,
+    private readonly tagService: TagService,
     @Inject(REQUEST) private readonly request: RequestWithUser
   ) {}
 
@@ -59,6 +61,35 @@ export class ImportController {
     let maxActivitiesToImport = this.configurationService.get(
       'MAX_ACTIVITIES_TO_IMPORT'
     );
+
+    const allTags = (importData.activities || [])
+      .flatMap((a) => (Array.isArray(a.tags) ? a.tags : []))
+      .filter((tag) => tag?.name)
+      .map((tag) => tag.name);
+    const uniqueTagNames = Array.from(new Set(allTags));
+    if (uniqueTagNames.length) {
+      const existingTags = await this.tagService.getTags();
+      const existingTagNames = existingTags.map((t) => t.name);
+      const newTagNames = uniqueTagNames.filter(
+        (name) => !existingTagNames.includes(name)
+      );
+      if (newTagNames.length) {
+        const canCreateOwnTag = hasPermission(
+          this.request.user.permissions,
+          permissions.createOwnTag
+        );
+        const canCreateTag = hasPermission(
+          this.request.user.permissions,
+          permissions.createTag
+        );
+        if (!canCreateOwnTag && !canCreateTag) {
+          throw new HttpException(
+            `Import contains new tags (${newTagNames.join(', ')}), but you do not have permission to create tags.`,
+            StatusCodes.FORBIDDEN
+          );
+        }
+      }
+    }
 
     if (
       this.configurationService.get('ENABLE_FEATURE_SUBSCRIPTION') &&
