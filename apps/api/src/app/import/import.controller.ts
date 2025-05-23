@@ -68,10 +68,25 @@ export class ImportController {
       .map((tag) => tag.name);
     const uniqueTagNames = Array.from(new Set(allTags));
     if (uniqueTagNames.length) {
-      const existingTags = await this.tagService.getTags();
-      const existingTagNames = existingTags.map((t) => t.name);
+      // First check for global tags
+      const globalTags = await this.tagService.getTags({
+        where: {
+          userId: null
+        }
+      });
+      const globalTagNames = globalTags.map((t) => t.name);
+
+      // Then check for user-specific tags
+      const userTags = await this.tagService.getTags({
+        where: {
+          userId: this.request.user.id
+        }
+      });
+      const userTagNames = userTags.map((t) => t.name);
+
+      // Find tags that don't exist either globally or for the user
       const newTagNames = uniqueTagNames.filter(
-        (name) => !existingTagNames.includes(name)
+        (name) => !globalTagNames.includes(name) && !userTagNames.includes(name)
       );
       if (newTagNames.length) {
         const canCreateOwnTag = hasPermission(
@@ -87,6 +102,18 @@ export class ImportController {
             `Import contains new tags (${newTagNames.join(', ')}), but you do not have permission to create tags.`,
             StatusCodes.FORBIDDEN
           );
+        }
+
+        // For new tags, create them with the user's ID
+        for (const tagName of newTagNames) {
+          await this.tagService.createTag({
+            name: tagName,
+            User: {
+              connect: {
+                id: this.request.user.id
+              }
+            }
+          });
         }
       }
     }
